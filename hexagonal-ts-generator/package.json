@@ -1,0 +1,30 @@
+{
+  "name": "hexagonal-ts-generator",
+  "version": "1.0.0",
+  "description": "TypeScript code generator that introspects a PostgreSQL database and emits a fully functional Hexagonal-Architecture REST API (with OpenAPI 3 / Swagger docs, Enterprise Bus, and Enterprise Repository patterns).",
+  "author": "Rewritten from the Python original by Awase Khirni Syed (c) 2025 β ORI Inc. Canada.",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "ts-node src/index.ts",
+    "start:dev": "ts-node --respawn src/index.ts",
+    "lint": "eslint 'src/**/*.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pg": "^8.11.5",
+    "dotenv": "^16.4.5",
+    "winston": "^3.13.2",
+    "change-case": "^4.1.2",
+    "pluralize": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/pg": "^8.11.6",
+    "@types/pluralize": "^0.0.33",
+    "typescript": "^5.4.5",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0"
+  }
+}

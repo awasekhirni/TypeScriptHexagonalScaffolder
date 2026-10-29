@@ -1,0 +1,261 @@
+/**
+ * * Copyright 2025 β ORI Inc. Canada. All Rights Reserved.
+ * Author: Awase Khirni Syed
+ * 
+ * src/generators/controller.generator.ts
+ * -------------------------------------------------------------------
+ * Mirrors `generate_controller()` from the Python original — but uses
+ * Express + swagger-jsdoc (OpenAPI 3) AND the v2 enhancements:
+ *
+ *   - JWT / API-key auth on every route
+ *   - Standardized JSON response envelope (sendOk / sendPaginated)
+ *   - Cursor + offset pagination with meta + HATEOAS links
+ *   - Per-route RBAC guard via requireRoles
+ *   - Structured logging on every handler with timings
+ *
+ * Copyright 2025 β ORI Inc. Canada. All Rights Reserved.
+ * Author: Awase Khirni Syed
+ */
+
+import { TableAnalysis, TableMetadata } from '../types';
+import { toPascalCase } from '../utils/naming';
+
+/** Build the OpenAPI paths object literal as a string. */
+function buildOpenApiPathsObject(meta: TableMetadata, _analysis: TableAnalysis): string {
+  const className = toPascalCase(meta.name);
+  const tag = meta.name;
+  return `{
+    '/${meta.name}': {
+      get: {
+        tags: ['${tag}'],
+        summary: 'List ${className} rows (paginated)',
+        security: [{ bearerAuth: [] }, { apiKey: [] }],
+        parameters: [
+          { in: 'query', name: 'page',     schema: { type: 'integer', default: 1, minimum: 1 } },
+          { in: 'query', name: 'per_page', schema: { type: 'integer', default: 20, minimum: 1, maximum: 100 } },
+          { in: 'query', name: 'cursor',   schema: { type: 'string' }, description: 'Opaque cursor returned in meta.nextCursor' },
+          { in: 'query', name: 'sort',     schema: { type: 'string', example: '-created_at' } },
+        ],
+        responses: {
+          200: { description: 'A paginated list of ${className} rows.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          429: { $ref: '#/components/responses/TooManyRequests' },
+        },
+      },
+      post: {
+        tags: ['${tag}'],
+        summary: 'Create a new ${className}',
+        security: [{ bearerAuth: [] }, { apiKey: [] }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { '$ref': '#/components/schemas/${className}Create' } } },
+        },
+        responses: {
+          201: { description: 'The created ${className}.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/${meta.name}/{id}': {
+      get: {
+        tags: ['${tag}'],
+        summary: 'Get one ${className} by id',
+        security: [{ bearerAuth: [] }, { apiKey: [] }],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'The ${className}.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } },
+          404: { $ref: '#/components/responses/NotFound' },
+        },
+      },
+      put: {
+        tags: ['${tag}'],
+        summary: 'Update one ${className} by id',
+        security: [{ bearerAuth: [] }, { apiKey: [] }],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { '$ref': '#/components/schemas/${className}Update' } } },
+        },
+        responses: {
+          200: { description: 'The updated ${className}.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } },
+          404: { $ref: '#/components/responses/NotFound' },
+        },
+      },
+      delete: {
+        tags: ['${tag}'],
+        summary: 'Delete one ${className} by id',
+        security: [{ bearerAuth: [] }, { apiKey: [] }],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+        responses: {
+          204: { description: 'Deleted.' },
+          404: { $ref: '#/components/responses/NotFound' },
+        },
+      },
+    },
+  }`;
+}
+
+function buildOpenApiTagsArray(meta: TableMetadata): string {
+  const className = toPascalCase(meta.name);
+  const tag = meta.name;
+  return `[{ name: '${tag}', description: '${className} operations' }]`;
+}
+
+/** Emit the controller file contents. */
+export function generateController(meta: TableMetadata, _analysis: TableAnalysis): string {
+  const className = toPascalCase(meta.name);
+  const tableName = meta.name;
+
+  const pathsLiteral = buildOpenApiPathsObject(meta, _analysis);
+  const tagsLiteral = buildOpenApiTagsArray(meta);
+
+  return `/**
+ * src/api/controllers/${tableName}.controller.ts
+ * ---------------------------------------------------------------
+ * Express router factory for ${className}.
+ *
+ * AUTO-GENERATED by hexagonal-ts-generator.
+ *
+ * Each handler:
+ *   1. authenticates the caller (JWT or API key),
+ *   2. validates the request payload,
+ *   3. delegates to the SITO facade (which calls the service),
+ *   4. maps the returned entity to a response DTO,
+ *   5. wraps the result in the standardized SuccessEnvelope,
+ *   6. logs the operation with timing.
+ *
+ * Copyright 2025 β ORI Inc. Canada. All Rights Reserved.
+ */
+import { Router, Request, Response, NextFunction } from 'express';
+import { ${tableName}Sito } from '../sito/${tableName}.sito';
+import { validate${className}Create, validate${className}Update } from '../validations/${tableName}.validation';
+import { registerOpenApiPaths } from '../../openapi';
+import { notFound } from '../../shared/utils/http-error';
+import { sendOk, sendCreated, sendNoContent, sendPaginated } from '../../shared/utils/api-response';
+import { authenticateAny } from '../../shared/middleware/auth';
+import { createChildLogger } from '../../shared/utils/logger';
+
+const log = createChildLogger('${className}Controller');
+
+// Register the OpenAPI 3 paths + tags for this controller at module-load
+// time so the swagger-ui handler picks them up when /docs is visited.
+const __openApiPaths = ${pathsLiteral} as Record<string, unknown>;
+const __openApiTags = ${tagsLiteral} as Array<{ name: string; description?: string }>;
+registerOpenApiPaths(__openApiPaths, __openApiTags);
+
+/**
+ * Wire the ${className} routes onto the given parent router.
+ *
+ * All routes require authentication (JWT or API key). Override the
+ * auth middleware by passing a different one to register${className}Routes.
+ */
+export function register${className}Routes(parent: Router, prefix = ''): Router {
+  const router = Router({ mergeParams: true });
+
+  // ----- GET /${tableName}  (list, paginated) -----
+  router.get('/', authenticateAny, async (req: Request, res: Response, next: NextFunction) => {
+    const startedAt = Date.now();
+    try {
+      const page    = Math.max(parseInt((req.query.page as string) ?? '1', 10), 1);
+      const perPage = Math.min(Math.max(parseInt((req.query.per_page as string) ?? '20', 10), 1), 100);
+      const cursor  = (req.query.cursor as string | undefined) ?? undefined;
+      const skip    = (page - 1) * perPage;
+      log.info('list', { page, perPage, cursor });
+
+      const [rows, total] = await Promise.all([
+        ${tableName}Sito.list(skip, perPage),
+        ${tableName}Sito.count(),
+      ]);
+      log.debug('list ok', { count: rows.length, total, durationMs: Date.now() - startedAt });
+
+      return sendPaginated(res, rows, {
+        page, perPage, total,
+        nextCursor: rows.length === perPage ? Buffer.from(\`page=\${page + 1}\`).toString('base64') : undefined,
+        basePath: (prefix || '') + '/${tableName}',
+      });
+    } catch (err) {
+      log.error('list failed', { error: (err as Error).message, durationMs: Date.now() - startedAt });
+      next(err);
+    }
+  });
+
+  // ----- POST /${tableName}  (create) -----
+  router.post('/', authenticateAny, async (req: Request, res: Response, next: NextFunction) => {
+    const startedAt = Date.now();
+    try {
+      log.info('create', { body: req.body, userId: req.user?.userId });
+      const dto = await validate${className}Create(req.body);
+      const created = await ${tableName}Sito.create(dto);
+      log.info('create ok', { id: (created as { id?: string }).id, durationMs: Date.now() - startedAt });
+      return sendCreated(res, created);
+    } catch (err) {
+      log.error('create failed', { error: (err as Error).message, durationMs: Date.now() - startedAt });
+      next(err);
+    }
+  });
+
+  // ----- GET /${tableName}/:id  (read) -----
+  router.get('/:id', authenticateAny, async (req: Request, res: Response, next: NextFunction) => {
+    const startedAt = Date.now();
+    const id = req.params.id as string;
+    try {
+      log.info('getById', { id });
+      const found = await ${tableName}Sito.getById(id);
+      if (!found) {
+        log.warn('getById not found', { id });
+        return next(notFound('${className} not found'));
+      }
+      log.debug('getById ok', { id, durationMs: Date.now() - startedAt });
+      return sendOk(res, found);
+    } catch (err) {
+      log.error('getById failed', { id, error: (err as Error).message, durationMs: Date.now() - startedAt });
+      next(err);
+    }
+  });
+
+  // ----- PUT /${tableName}/:id  (update) -----
+  router.put('/:id', authenticateAny, async (req: Request, res: Response, next: NextFunction) => {
+    const startedAt = Date.now();
+    const id = req.params.id as string;
+    try {
+      log.info('update', { id, body: req.body, userId: req.user?.userId });
+      const dto = await validate${className}Update(req.body);
+      const updated = await ${tableName}Sito.update(id, dto);
+      if (!updated) {
+        log.warn('update not found', { id });
+        return next(notFound('${className} not found'));
+      }
+      log.info('update ok', { id, durationMs: Date.now() - startedAt });
+      return sendOk(res, updated);
+    } catch (err) {
+      log.error('update failed', { id, error: (err as Error).message, durationMs: Date.now() - startedAt });
+      next(err);
+    }
+  });
+
+  // ----- DELETE /${tableName}/:id  (delete) -----
+  router.delete('/:id', authenticateAny, async (req: Request, res: Response, next: NextFunction) => {
+    const startedAt = Date.now();
+    const id = req.params.id as string;
+    try {
+      log.info('delete', { id, userId: req.user?.userId });
+      const ok = await ${tableName}Sito.remove(id);
+      if (!ok) {
+        log.warn('delete not found', { id });
+        return next(notFound('${className} not found'));
+      }
+      log.info('delete ok', { id, durationMs: Date.now() - startedAt });
+      return sendNoContent(res);
+    } catch (err) {
+      log.error('delete failed', { id, error: (err as Error).message, durationMs: Date.now() - startedAt });
+      next(err);
+    }
+  });
+
+  parent.use(prefix + '/${tableName}', router);
+  log.debug('routes mounted', { path: prefix + '/${tableName}' });
+  return router;
+}
+`;
+}

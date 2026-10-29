@@ -1,1 +1,103 @@
+Copyright 2025 β ORI Inc. Canada. All Rights Reserved.
+Author: Awase Khirni Syed
 
+| Tool | Min version | Why | Check |
+|------|------------|-----|-------|
+| Node.js | v20.0+ | Generator runtime + generated API runtime | `node --version` |
+| npm | v10.0+ | Package management | `npm --version` |
+| PostgreSQL | v14+ | Source DB to introspect + target DB for the API | `psql --version` |
+| Docker (optional) | v24+ | Run the generated API in a container | `docker --version` |
+| Git | any | Version control | `git --version` |
+
+
+Node.js → https://nodejs.org/en/download/
+PostgreSQL → https://www.postgresql.org/download/
+Docker → https://docs.docker.com/get-docker/
+
+
+| ---=====----====-----=== Database Setup Instructions 
+
+1. Setting up PostgreSQL
+# Verify it's running
+pg_isready
+# → /tmp:5432 - accepting connections
+
+Alternatively you can use docker 
+docker run -d \
+  --name hexagonal-pg \
+  -e POSTGRES_USER=awasekhirnisyed \
+  -e POSTGRES_PASSWORD=YOUR_PASSWORD_HERE \
+  -e POSTGRES_DB=profxdb \
+  -p 5432:5432 \
+  postgres:16-alpine
+
+# Wait for it to be ready
+docker exec hexagonal-pg pg_isready -U awasekhirnisyed
+
+verify connection to postgresql 
+psql "postgresql://awasekhirnisyed:YOUR_PASSWORD_HERE@localhost:5432/profxdb" -c "\dt"
+
+
+#create sample tables 
+
+psql "postgresql://awasekhirnisyed:YOUR_PASSWORD_HERE@localhost:5432/profxdb" <<'SQL'
+-- Enable uuid generation
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Users table (with timestamps, status, soft-delete)
+CREATE TABLE IF NOT EXISTS users (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email           VARCHAR(255) UNIQUE NOT NULL,
+  full_name       VARCHAR(100) NOT NULL,
+  account_status  VARCHAR(20) NOT NULL DEFAULT 'active',
+  is_deleted      BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at      TIMESTAMP,
+  created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Posts table (with FK to users, status, view counter)
+CREATE TABLE IF NOT EXISTS posts (
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id      UUID NOT NULL REFERENCES users(id),
+  title        VARCHAR(200) NOT NULL,
+  body         TEXT,
+  post_status  VARCHAR(20) NOT NULL DEFAULT 'draft',
+  view_count   INTEGER NOT NULL DEFAULT 0,
+  created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Index for FK lookups
+CREATE INDEX IF NOT EXISTS idx_posts_user_id ON posts(user_id);
+
+\dt
+SQL
+
+
+|----======---- Setting up the generator 
+
+rayyan@macmini TypescriptGenerator %  cd TypescriptGenerator 
+
+rayyan@macmini TypescriptGenerator % npm install --no-audit --no-fund 
+
+added 87 packages in 16s
+
+rayyan@macmini TypescriptGenerator % npm run type-check
+npm error Missing script: "type-check"
+npm error
+npm error Did you mean this?
+npm error   npm run typecheck # run the "typecheck" package script
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: /Users/rayyan/.npm/_logs/2026-10-29T14_35_29_786Z-debug-0.log
+
+rayyan@macmini TypescriptGenerator % touch .env
+verifying my .env is correct 
+# Mask the password and print
+cat .env | sed 's/\(.*PASSWORD.*=\).*/\1***/' | sed 's/\(JWT_SECRET=\).*/\1***/'
+
+
+Typescript project starter 
+npm init -y && npm i -D typescript ts-node eslint prettier @types/node && npx tsc --init
